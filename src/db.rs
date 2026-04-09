@@ -1,6 +1,9 @@
 use sqlx::{PgPool, Postgres, Transaction, postgres::PgPoolOptions};
 
-use crate::{error::ConsumerError, types::CustomerId};
+use crate::{
+    error::ConsumerError,
+    types::{CustomerId, Money, PaymentId},
+};
 
 pub struct Db {
     pub pool: PgPool,

@@ -110,10 +110,27 @@ impl std::fmt::Display for CustomerId {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct KafkaOffset(i64);
 
+impl KafkaOffset {
+    pub fn new(v: i64) -> Self {
+        Self(v)
+    }
+    pub fn value(self) -> i64 {
+        self.0
+    }
+}
+
+impl std::fmt::Display for KafkaOffset {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 // MessageEnvelope — owned copy of BorrowedMessage, safe across await
-pub struct MessageEnvelop {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageEnvelope {
     pub id: Uuid,
     pub topic: String,
     pub partition: i32,
