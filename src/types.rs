@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -110,7 +110,6 @@ impl std::fmt::Display for CustomerId {
     }
 }
 
-
 pub struct KafkaOffset(i64);
 
 // MessageEnvelope — owned copy of BorrowedMessage, safe across await
@@ -122,5 +121,5 @@ pub struct MessageEnvelop {
     pub key: Option<String>,
     pub payload: Value,
     pub timestamp_ms: Option<i64>,
-    pub received_at: DateTime<Utc>
+    pub received_at: DateTime<Utc>,
 }

@@ -1,7 +1,5 @@
-
 #[derive(Debug, thiserror::Error)]
 pub enum ConsumerError {
-
     #[error("invalid amount: must be greater than zero pence")]
     InvalidAmount,
 
