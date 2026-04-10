@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT EXISTS(\n                SELECT 1 FROM processed_offsets\n                WHERE  topic     = $1\n                AND    partition = $2\n                AND    \"offset\"  = $3\n            ) AS \"exists!\"\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "exists!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int4",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "253b8948d9df4c08370a8b2acc469a8fbca2fcb54c47d1923bbf8e02c256e7f9"
+}

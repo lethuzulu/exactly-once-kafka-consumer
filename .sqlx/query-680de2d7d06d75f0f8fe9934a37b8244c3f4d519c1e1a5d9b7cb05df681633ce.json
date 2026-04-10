@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO processed_offsets (topic, partition, \"offset\")\n            VALUES ($1, $2, $3)\n            ON CONFLICT (topic, partition, \"offset\") DO NOTHING\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int4",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "680de2d7d06d75f0f8fe9934a37b8244c3f4d519c1e1a5d9b7cb05df681633ce"
+}

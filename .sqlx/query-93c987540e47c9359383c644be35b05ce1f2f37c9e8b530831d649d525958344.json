@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT COUNT(*)\n            FROM   wallet_transactions wt\n            JOIN   wallets w ON wt.wallet_id = w.id\n            WHERE  w.customer_id = $1\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "93c987540e47c9359383c644be35b05ce1f2f37c9e8b530831d649d525958344"
+}

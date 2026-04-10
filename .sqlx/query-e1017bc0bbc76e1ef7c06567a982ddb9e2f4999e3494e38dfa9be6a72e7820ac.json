@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO dead_letter_messages (\n                id, topic, partition, \"offset\",\n                message_key, payload, error_reason, received_at\n            )\n            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)\n            ON CONFLICT (id) DO NOTHING\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Int4",
+        "Int8",
+        "Text",
+        "Jsonb",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e1017bc0bbc76e1ef7c06567a982ddb9e2f4999e3494e38dfa9be6a72e7820ac"
+}
