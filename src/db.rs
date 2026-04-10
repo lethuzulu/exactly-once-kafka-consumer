@@ -2,7 +2,7 @@ use sqlx::{PgPool, Postgres, Transaction, postgres::PgPoolOptions};
 
 use crate::{
     error::ConsumerError,
-    types::{CustomerId, Money, PaymentId},
+    types::{CustomerId, MessageEnvelope, Money, PaymentId},
 };
 
 pub struct Db {
@@ -91,7 +91,7 @@ impl Db {
             updated_at    = now()
         "#,
             customer_id.as_uuid(),
-            amount.pence(),
+            amount.cents(),
         )
         .execute(&mut **tx)
         .await?;
@@ -104,7 +104,7 @@ impl Db {
         FROM   wallets WHERE customer_id = $1
         "#,
             customer_id.as_uuid(),
-            amount.pence(),
+            amount.cents(),
             payment_id.as_uuid(),
             topic,
             partition,
@@ -130,7 +130,7 @@ impl Db {
                 SELECT 1 FROM processed_offsets
                 WHERE  topic     = $1
                 AND    partition = $2
-                AND    offset    = $3
+                AND    "offset"  = $3
             ) AS "exists!"
             "#,
             topic,
@@ -151,9 +151,9 @@ impl Db {
     ) -> Result<bool, ConsumerError> {
         let rows_affected = sqlx::query!(
             r#"
-            INSERT INTO processed_offsets (topic, partition, offset)
+            INSERT INTO processed_offsets (topic, partition, "offset")
             VALUES ($1, $2, $3)
-            ON CONFLICT (topic, partition, offset) DO NOTHING
+            ON CONFLICT (topic, partition, "offset") DO NOTHING
             "#,
             topic,
             partition,
@@ -181,5 +181,52 @@ impl Db {
         .unwrap_or(0);
 
         Ok(count)
+    }
+}
+
+impl Db {
+    pub async fn insert_dead_letter(
+        &self,
+        envelope: &MessageEnvelope,
+        reason:   &str,
+    ) -> Result<(), ConsumerError> {
+        sqlx::query!(
+            r#"
+            INSERT INTO dead_letter_messages (
+                id, topic, partition, "offset",
+                message_key, payload, error_reason, received_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            ON CONFLICT (id) DO NOTHING
+            "#,
+            envelope.id,
+            envelope.topic,
+            envelope.partition,
+            envelope.offset.value(),
+            envelope.key.as_deref(),
+            envelope.payload,
+            reason,
+            envelope.received_at,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        tracing::warn!(
+            id        = %envelope.id,
+            topic     = envelope.topic,
+            partition = envelope.partition,
+            offset    = %envelope.offset,
+            reason,
+            "message dead-lettered"
+        );
+
+        Ok(())
+    }
+
+    pub async fn dead_letter_count(&self) -> Result<i64, ConsumerError> {
+        Ok(sqlx::query_scalar!("SELECT COUNT(*) FROM dead_letter_messages")
+            .fetch_one(&self.pool)
+            .await?
+            .unwrap_or(0))
     }
 }

@@ -140,3 +140,17 @@ pub struct MessageEnvelope {
     pub timestamp_ms: Option<i64>,
     pub received_at: DateTime<Utc>,
 }
+
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProcessingResult {
+    Processed,
+    Duplicate,
+    DeadLetter { reason: String },
+}
+
+impl ProcessingResult {
+    pub fn should_commit_offset(&self) -> bool {
+        true
+    }
+}

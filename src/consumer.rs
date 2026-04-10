@@ -2,7 +2,7 @@ use crate::{
     config::ConsumerConfig,
     db::Db,
     error::ConsumerError,
-    types::{KafkaOffset, MessageEnvelope},
+    types::{CustomerId, KafkaOffset, MessageEnvelope, Money, PaymentId, ProcessingResult},
 };
 
 use chrono::Utc;
@@ -101,6 +101,23 @@ impl KafkaConsumer {
 
         loop {
             tokio::select! {
+                // The current message always finishes before shutdown takes effect.
+                _ = shutdown.changed() => {
+                    if *shutdown.borrow() {
+                        tracing::info!("consumer shutting down");
+                        return Ok(());
+                    }
+                }
+
+                msg = tokio::task::spawn_blocking({
+                    // rdkafka's poll is synchronous, we use poll() in a blocking context so it does not starve the tokio runtime.
+                    // StreamConsumer::recv() is the async alternative. We use recv() directly below
+                    || ()
+                }) => { let _ = msg; } // placeholder — see recv() below
+            }
+
+            // the actual async receive
+            tokio::select! {
                 _ = shutdown.changed() => {
                     if *shutdown.borrow() {
                         tracing::info!("consumer shutting down cleanly");
@@ -111,10 +128,12 @@ impl KafkaConsumer {
                 result = self.inner.recv() => {
                     match result {
                         Err(e) => {
+                            // transient Kafka error — log and continue.
                             tracing::error!(error = %e, "kafka recv error");
                             continue;
                         }
                         Ok(msg) => {
+                            // BorrowedMessage cannot cross await points.
                             let envelope = match extract_envelope(&msg) {
                                 Ok(e)  => e,
                                 Err(e) => {
@@ -124,16 +143,132 @@ impl KafkaConsumer {
                                         offset = msg.offset(),
                                         "envelope extraction failed"
                                     );
+                                    // dead letter and commit — do not block on bad message
+                                    let dead_env = make_dead_envelope(&msg);
+                                    let _ = self.db.insert_dead_letter(&dead_env, &e.to_string()).await;
                                     self.commit_offset(&msg);
                                     continue;
                                 }
                             };
+
+                            //process with exactly-once semantics.
+                            match self.process(&envelope).await {
+                                Ok(ProcessingResult::Processed) => {
+                                    tracing::info!(
+                                        id        = %envelope.id,
+                                        topic     = envelope.topic,
+                                        partition = envelope.partition,
+                                        offset    = %envelope.offset,
+                                        "payment processed — wallet credited"
+                                    );
+                                    self.commit_offset(&msg);
+                                }
+
+                                Ok(ProcessingResult::Duplicate) => {
+                                    tracing::debug!(
+                                        topic     = envelope.topic,
+                                        partition = envelope.partition,
+                                        offset    = %envelope.offset,
+                                        "duplicate offset — skipping, committing"
+                                    );
+                                    self.commit_offset(&msg);
+                                }
+
+                                Ok(ProcessingResult::DeadLetter { reason }) => {
+                                    tracing::warn!(
+                                        id        = %envelope.id,
+                                        reason,
+                                        "message dead-lettered"
+                                    );
+                                    let _ = self.db.insert_dead_letter(&envelope, &reason).await;
+                                    self.commit_offset(&msg);
+                                }
+
+                                Err(e) if e.is_transient() => {
+                                    tracing::warn!(
+                                        error     = %e,
+                                        topic     = envelope.topic,
+                                        partition = envelope.partition,
+                                        offset    = %envelope.offset,
+                                        "transient error — will retry on replay"
+                                    );
+                                }
+
+                                Err(e) => {
+                                    // permanent unexpected error — dead letter.
+                                    tracing::error!(error = %e, "unexpected processing error");
+                                    let _ = self.db.insert_dead_letter(&envelope, &e.to_string()).await;
+                                    self.commit_offset(&msg);
+                                }
+                            }
                         }
                     }
                 }
             }
         }
+    
     }
+
+    async fn process(
+        &self,
+        envelope: &MessageEnvelope,
+    ) -> Result<ProcessingResult, ConsumerError> {
+        let topic     = &envelope.topic;
+        let partition = envelope.partition;
+        let offset    = envelope.offset.value();
+
+        if self.db.is_already_processed(topic, partition, offset).await? {
+            return Ok(ProcessingResult::Duplicate);
+        }
+
+        let customer_id = envelope
+            .payload["customer_id"]
+            .as_str()
+            .and_then(|s| uuid::Uuid::parse_str(s).ok())
+            .map(CustomerId::from_uuid)
+            .ok_or_else(|| ConsumerError::MissingField("customer_id".into()))?;
+
+        let amount = envelope
+            .payload["amount_pence"]
+            .as_i64()
+            .ok_or_else(|| ConsumerError::MissingField("amount_pence".into()))
+            .and_then(Money::from_cents)?;
+
+        let payment_id = envelope
+            .payload["payment_id"]
+            .as_str()
+            .and_then(|s| uuid::Uuid::parse_str(s).ok())
+            .map(PaymentId::from_uuid)
+            .ok_or_else(|| ConsumerError::MissingField("payment_id".into()))?;
+
+        let inserted = self
+            .db
+            .with_transaction(|mut tx| async move {
+                Db::credit_wallet_in_tx(
+                    &mut tx,
+                    customer_id,
+                    amount,
+                    payment_id,
+                    topic,
+                    partition,
+                    offset,
+                )
+                .await?;
+
+                let inserted = Db::insert_processed_offset(&mut tx, topic, partition, offset)
+                    .await?;
+
+                Ok((inserted, tx))
+            })
+            .await?;
+
+        if inserted {
+            Ok(ProcessingResult::Processed)
+        } else {
+            Ok(ProcessingResult::Duplicate)
+        }
+    }
+
 
     fn commit_offset(&self, msg: &BorrowedMessage<'_>) {
         if let Err(e) = self.inner.commit_message(msg, CommitMode::Async) {
@@ -171,4 +306,18 @@ pub fn extract_envelope(msg: &BorrowedMessage<'_>) -> Result<MessageEnvelope, Co
         timestamp_ms: msg.timestamp().to_millis(),
         received_at: Utc::now(),
     })
+}
+
+// create a minimal envelope for dead-lettering unextractable messages.
+fn make_dead_envelope(msg: &BorrowedMessage<'_>) -> MessageEnvelope {
+    MessageEnvelope {
+        id:           Uuid::new_v4(),
+        topic:        msg.topic().to_string(),
+        partition:    msg.partition(),
+        offset:       KafkaOffset::new(msg.offset()),
+        key:          None,
+        payload:      serde_json::json!({ "raw": format!("{:?}", msg.payload()) }),
+        timestamp_ms: msg.timestamp().to_millis(),
+        received_at:  Utc::now(),
+    }
 }

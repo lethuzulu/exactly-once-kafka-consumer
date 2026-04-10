@@ -1,7 +1,7 @@
 use crate::error::ConsumerError;
 
-/// All configuration for the Kafka consumer.
-/// Validated at startup — a misconfigured consumer fails fast.
+// All configuration for the Kafka consumer.
+// Validated at startup — a misconfigured consumer fails fast.
 #[derive(Debug, Clone)]
 pub struct ConsumerConfig {
     pub brokers: String,
