@@ -5,6 +5,7 @@ use crate::{
     types::{CustomerId, MessageEnvelope, Money, PaymentId},
 };
 
+#[derive(Debug, Clone)]
 pub struct Db {
     pub pool: PgPool,
 }
